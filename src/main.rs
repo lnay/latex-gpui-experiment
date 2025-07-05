@@ -1,6 +1,6 @@
 use gpui::{
-    Application, Background, Bounds, Context, Path, PathBuilder, Pixels, Render, Window,
-    WindowBounds, WindowOptions, canvas, div, point, prelude::*, px, rgb, size,
+    Application, BorderStyle, Bounds, Context, Corners, PaintQuad, Path, Pixels, Render, Window,
+    WindowBounds, WindowOptions, canvas, div, prelude::*, px, rgb, size,
 };
 mod math;
 use math::latex_to_paths;
@@ -9,17 +9,17 @@ const DEFAULT_WINDOW_WIDTH: Pixels = px(1024.0);
 const DEFAULT_WINDOW_HEIGHT: Pixels = px(768.0);
 
 struct PaintingViewer {
-    default_lines: Vec<Path<Pixels>>,
-    _painting: bool,
+    paths: Vec<Path<Pixels>>,
+    rects: Vec<Bounds<Pixels>>,
 }
 
 impl PaintingViewer {
     fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
-        let lines = latex_to_paths();
-        Self {
-            default_lines: lines.clone(),
-            _painting: false,
-        }
+        let (paths, rects) = latex_to_paths(
+            r"e = \lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n",
+            40.,
+        );
+        Self { paths, rects }
     }
 }
 
@@ -27,7 +27,9 @@ impl Render for PaintingViewer {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         window.request_animation_frame();
 
-        let default_lines = self.default_lines.clone();
+        let paths = self.paths.clone();
+        let rects = self.rects.clone();
+
         let window_size = window.bounds().size;
         let scale = window_size.width / DEFAULT_WINDOW_WIDTH;
 
@@ -39,10 +41,21 @@ impl Render for PaintingViewer {
             .child(
                 div().size_full().child(
                     canvas(
-                        move |_, _, _| gpui::Size::new(Pixels(500.), Pixels(500.)), // Find out how to specify the size of the canvas
+                        move |_, _, _| {}, // TODO Find out how to reserve specific size for canvas
                         move |_, _, window, _| {
-                            for path in default_lines {
+                            // TODO position within given bounds
+                            for path in paths {
                                 window.paint_path(path.clone().scale(scale), rgb(0x000000));
+                            }
+                            for rect in rects {
+                                window.paint_quad(PaintQuad {
+                                    bounds: rect,
+                                    background: rgb(0x000000).into(),
+                                    border_color: rgb(0x000000).into(),
+                                    border_widths: gpui::Edges::default(),
+                                    corner_radii: Corners::default(),
+                                    border_style: BorderStyle::Solid,
+                                });
                             }
                         },
                     )

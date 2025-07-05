@@ -1,18 +1,17 @@
-use gpui::TransformationMatrix;
+use gpui::{Bounds, PaintQuad, TransformationMatrix};
 use rex::font::backend::ttf_parser::TtfMathFont;
 use rex::layout::LayoutDimensions;
 use rex::parser::color::RGBA;
 use rex::render::{Backend, Cursor, Role};
 use rex::{FontBackend, GraphicsBackend, font::common::GlyphId};
 
-/// Backend for TinySkia renderer
+/// ReX rendering backend to build paths ready to be drawn onto canvas
 pub struct GPUIBackend {
     paths: Vec<gpui::Path<gpui::Pixels>>,
-    rects: Vec<gpui::PaintQuad>,
+    rects: Vec<gpui::Bounds<gpui::Pixels>>,
     /// Transform to convert from position according to ReX Renderer backend
-    /// to coordinates canvas
+    /// to coordinates on canvas
     layout_to_canvas: gpui::TransformationMatrix,
-    scale: f32,
 }
 
 impl GPUIBackend {
@@ -22,17 +21,20 @@ impl GPUIBackend {
             rotation_scale: [[scale, 0.], [0., scale]],
             translation: [0., dims.height as f32 * scale],
         };
-        // Transform::from_translate(0.0, dims.height as f32).post_scale(scale, scale);
 
         Self {
             paths: vec![],
             rects: vec![],
             layout_to_canvas: layout_to_pixmap,
-            scale,
         }
     }
     /// Returns data ready to be drawn onto canvas
-    pub fn paths_and_rects(self) -> (Vec<gpui::Path<gpui::Pixels>>, Vec<gpui::PaintQuad>) {
+    pub fn paths_and_rects(
+        self,
+    ) -> (
+        Vec<gpui::Path<gpui::Pixels>>,
+        Vec<gpui::Bounds<gpui::Pixels>>,
+    ) {
         (self.paths, self.rects)
     }
 }
@@ -42,7 +44,7 @@ impl FontBackend<TtfMathFont<'_>> for GPUIBackend {
         // Make the tiny_skia path builder implement the necessary trait to draw
         // the glyph with the TtfMathFont font backend
         let font_to_canvas: TransformationMatrix = {
-            let scale = self.scale * scale as f32;
+            let scale = scale as f32;
             let fm = ctx.font_matrix();
 
             self.layout_to_canvas
@@ -112,113 +114,56 @@ impl Backend<TtfMathFont<'_>> for GPUIBackend {}
 
 impl GraphicsBackend for GPUIBackend {
     fn bbox(&mut self, _pos: Cursor, _width: f64, _height: f64, _role: Role) {}
-    fn rule(&mut self, _pos: Cursor, _width: f64, _height: f64) {}
-    fn begin_color(&mut self, RGBA(_r, _g, _b, _a): RGBA) {}
+    fn rule(&mut self, pos: Cursor, width: f64, height: f64) {
+        use gpui::px;
+        // Again the Pixels type here is misused, just to typecheck with the way TransformationMatrix is written
+        let layout_top_left = gpui::Point::new(px(pos.x as f32), px(pos.y as f32));
+        // Actual pixel position:
+        let top_left = self.layout_to_canvas.apply(layout_top_left);
+        // quick and dirty:
+        let size = gpui::size(
+            px(width as f32 * self.layout_to_canvas.rotation_scale[0][0]),
+            px(height as f32 * self.layout_to_canvas.rotation_scale[1][1]),
+        );
+        self.rects.push(Bounds::new(top_left, size));
+    }
+    fn begin_color(&mut self, _: RGBA) {}
     fn end_color(&mut self) {}
 }
 
-pub fn latex_to_paths(// latex: &str,
+pub fn latex_to_paths(
+    equation: &str,
     // font: &TtfMathFont<'_>,
-    // scale: f64,
-) -> Vec<gpui::Path<gpui::Pixels>> {
+    font_size: f64,
+) -> (Vec<gpui::Path<gpui::Pixels>>, Vec<Bounds<gpui::Pixels>>) {
     use rex::layout::{Style, engine::LayoutBuilder};
-    static FONT: std::sync::LazyLock<TtfMathFont<'_>> = std::sync::LazyLock::new(|| {
-        TtfMathFont::new(
-            rex::font::backend::ttf_parser::ttf_parser_crate::Face::parse(
-                include_bytes!("../XITS_Math.otf"),
-                0,
-            )
-            .unwrap(),
-        )
-        .unwrap()
-    });
 
-    const FONT_SIZE: f64 = 80.0;
-    let layout_engine = LayoutBuilder::new(&*FONT)
-        .font_size(FONT_SIZE)
+    // This font stuff would ultimately be better if only performed once,
+    // or maybe using the gpui font system, but gpui and its dependencies (like font-kit)
+    // don't appear to read the font math table so cannot currently implement the `MathFont` trait
+    // needed by ReX.
+    let font = TtfMathFont::new(
+        rex::font::backend::ttf_parser::ttf_parser_crate::Face::parse(
+            include_bytes!("../XITS_Math.otf"),
+            0,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let layout_engine = LayoutBuilder::new(&font)
+        .font_size(font_size)
         .style(Style::Display)
         .build();
 
-    let equation = r"e = \lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n";
-    // let equation = r"x = 1";
     let parse_nodes = rex::parser::parse(equation).unwrap();
 
     let layout = layout_engine.layout(&parse_nodes).unwrap();
 
     let renderer = rex::Renderer::new();
 
-    const SCALE: f64 = 1.; // non-1 scale broken
+    const SCALE: f64 = 1.;
     let mut backend = GPUIBackend::new(layout.size(), SCALE);
     renderer.render(&layout, &mut backend);
-    backend.paths_and_rects().0
+    backend.paths_and_rects()
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::LayoutBuilder;
-//     use crate::Renderer;
-//     use crate::font::backend::ttf_parser::TtfMathFont;
-//     use crate::layout::Style;
-
-//     #[cfg(feature = "ttfparser-fontparser")]
-//     fn load_font<'a>(file: &'a [u8]) -> crate::font::backend::ttf_parser::TtfMathFont<'a> {
-//         let font = ttf_parser::Face::parse(file, 0).unwrap();
-//         TtfMathFont::new(font).unwrap()
-//     }
-//     #[test]
-//     #[cfg(feature = "ttfparser-fontparser")]
-//     fn test_tiny_skia_backend_ttfparser() {
-//         // TODO: Add tests for TinySkiaBackend
-//         let font_file: &[u8] = include_bytes!("../../resources/XITS_Math.otf");
-//         let font = load_font(font_file);
-//         let equation = "x_f = \\sqrt{\\frac{a + b}{c - d}}";
-//         const FONT_SIZE: f64 = 16.0;
-//         let layout_engine = LayoutBuilder::new(&font)
-//             .font_size(FONT_SIZE)
-//             .style(Style::Display)
-//             .build();
-
-//         let parse_nodes = crate::parser::parse(equation).unwrap();
-
-//         let layout = layout_engine.layout(&parse_nodes).unwrap();
-
-//         let renderer = Renderer::new();
-
-//         const SCALE: f64 = 5.;
-//         let mut tinyskia_backend = GPUIBackend::new(layout.size(), Color::WHITE, SCALE);
-//         renderer.render(&layout, &mut tinyskia_backend);
-//         tinyskia_backend
-//             .pixmap()
-//             .save_png("ttfparser-tinyskia.png")
-//             .unwrap();
-//     }
-
-//     #[test]
-//     #[cfg(feature = "fontrs-fontparser")]
-//     fn test_tiny_skia_backend_fontrs() {
-//         let font_file: &[u8] = include_bytes!("../../resources/FiraMath_Regular.otf");
-//         let font = OpenTypeFont::parse(font_file).unwrap();
-//         let equation = "x_f = {\\color{red}\\sqrt{\\frac{a + b}{c - d}}}";
-//         const FONT_SIZE: f64 = 16.0;
-//         let layout_engine = LayoutBuilder::new(&font)
-//             .font_size(FONT_SIZE)
-//             .style(Style::Display)
-//             .build();
-
-//         let parse_nodes = crate::parser::parse(equation).unwrap();
-
-//         let layout = layout_engine.layout(&parse_nodes).unwrap();
-
-//         let mut renderer = Renderer::new();
-//         renderer.debug = true;
-
-//         const SCALE: f64 = 5.;
-//         let mut tinyskia_backend = GPUIBackend::new(layout.size(), Color::BLACK, SCALE);
-//         renderer.render(&layout, &mut tinyskia_backend);
-//         tinyskia_backend
-//             .pixmap()
-//             .save_png("fontrs-tinyskia.png")
-//             .unwrap();
-//     }
-// }
