@@ -2,33 +2,20 @@ use gpui::{
     Application, Background, Bounds, Context, Path, PathBuilder, Pixels, Render, Window,
     WindowBounds, WindowOptions, canvas, div, point, prelude::*, px, rgb, size,
 };
+mod math;
+use math::latex_to_paths;
 
 const DEFAULT_WINDOW_WIDTH: Pixels = px(1024.0);
 const DEFAULT_WINDOW_HEIGHT: Pixels = px(768.0);
 
 struct PaintingViewer {
-    default_lines: Vec<(Path<Pixels>, Background)>,
+    default_lines: Vec<Path<Pixels>>,
     _painting: bool,
 }
 
 impl PaintingViewer {
     fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
-        let mut lines = vec![];
-
-        // draw a lightening bolt ⚡
-        let mut builder = PathBuilder::fill();
-        builder.add_polygon(
-            &[
-                point(px(150.), px(200.)),
-                point(px(200.), px(125.)),
-                point(px(200.), px(175.)),
-                point(px(250.), px(100.)),
-            ],
-            false,
-        );
-        let path = builder.build().unwrap();
-        lines.push((path, rgb(0x1d4ed8).into()));
-
+        let lines = latex_to_paths();
         Self {
             default_lines: lines.clone(),
             _painting: false,
@@ -52,10 +39,10 @@ impl Render for PaintingViewer {
             .child(
                 div().size_full().child(
                     canvas(
-                        move |_, _, _| {},
+                        move |_, _, _| gpui::Size::new(Pixels(500.), Pixels(500.)), // Find out how to specify the size of the canvas
                         move |_, _, window, _| {
-                            for (path, color) in default_lines {
-                                window.paint_path(path.clone().scale(scale), color);
+                            for path in default_lines {
+                                window.paint_path(path.clone().scale(scale), rgb(0x000000));
                             }
                         },
                     )
