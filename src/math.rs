@@ -1,4 +1,4 @@
-use gpui::{Bounds, PaintQuad, TransformationMatrix};
+use gpui::{Bounds, TransformationMatrix};
 use rex::font::backend::ttf_parser::TtfMathFont;
 use rex::layout::LayoutDimensions;
 use rex::parser::color::RGBA;
@@ -136,34 +136,27 @@ pub fn latex_to_paths(
     // font: &TtfMathFont<'_>,
     font_size: f64,
 ) -> (Vec<gpui::Path<gpui::Pixels>>, Vec<Bounds<gpui::Pixels>>) {
+    use rex::font::backend::ttf_parser::ttf_parser_crate::Face;
     use rex::layout::{Style, engine::LayoutBuilder};
+    use rex::parser::parse as parse_latex;
 
     // This font stuff would ultimately be better if only performed once,
     // or maybe using the gpui font system, but gpui and its dependencies (like font-kit)
     // don't appear to read the font math table so cannot currently implement the `MathFont` trait
     // needed by ReX.
-    let font = TtfMathFont::new(
-        rex::font::backend::ttf_parser::ttf_parser_crate::Face::parse(
-            include_bytes!("../XITS_Math.otf"),
-            0,
-        )
-        .unwrap(),
-    )
-    .unwrap();
+    let font =
+        TtfMathFont::new(Face::parse(include_bytes!("../XITS_Math.otf"), 0).unwrap()).unwrap();
 
     let layout_engine = LayoutBuilder::new(&font)
         .font_size(font_size)
         .style(Style::Display)
         .build();
 
-    let parse_nodes = rex::parser::parse(equation).unwrap();
-
+    let parse_nodes = parse_latex(equation).unwrap();
     let layout = layout_engine.layout(&parse_nodes).unwrap();
-
     let renderer = rex::Renderer::new();
 
-    const SCALE: f64 = 1.;
-    let mut backend = GPUIBackend::new(layout.size(), SCALE);
+    let mut backend = GPUIBackend::new(layout.size(), 1.);
     renderer.render(&layout, &mut backend);
     backend.paths_and_rects()
 }
