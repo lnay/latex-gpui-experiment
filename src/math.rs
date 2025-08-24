@@ -1,9 +1,17 @@
-use gpui::{Bounds, TransformationMatrix};
+use gpui::{
+    AbsoluteLength, App, Bounds, Element, GlobalElementId, InspectorElementId, IntoElement,
+    LayoutId, Length, Path, Pixels, Size, TransformationMatrix, Window, px,
+};
+use gpui::{
+    Application, BorderStyle, Context, Corners, PaintQuad, Render, WindowBounds, WindowOptions,
+    canvas, div, prelude::*, rgb, size,
+};
 use rex::font::backend::ttf_parser::TtfMathFont;
-use rex::layout::LayoutDimensions;
+use rex::layout::{Layout, LayoutDimensions};
 use rex::parser::color::RGBA;
 use rex::render::{Backend, Cursor, Role};
 use rex::{FontBackend, GraphicsBackend, font::common::GlyphId};
+use std::panic::Location;
 
 /// ReX rendering backend to build paths ready to be drawn onto canvas
 pub struct GPUIBackend {
@@ -159,4 +167,138 @@ pub fn latex_to_paths(
     let mut backend = GPUIBackend::new(layout.size(), 1.);
     renderer.render(&layout, &mut backend);
     backend.paths_and_rects()
+}
+
+pub struct LatexElement {
+    paths: Vec<Path<Pixels>>,
+    rects: Vec<Bounds<Pixels>>,
+    width: f32,
+    height: f32,
+}
+
+impl LatexElement {
+    pub fn new(equation: &str, font_size: f64) -> Self {
+        use rex::font::backend::ttf_parser::ttf_parser_crate::Face;
+        use rex::layout::{Style, engine::LayoutBuilder};
+        use rex::parser::parse as parse_latex;
+
+        // This font stuff would ultimately be better if only performed once,
+        // or maybe using the gpui font system, but gpui and its dependencies (like font-kit)
+        // don't appear to read the font math table so cannot currently implement the `MathFont` trait
+        // needed by ReX.
+        let font =
+            TtfMathFont::new(Face::parse(include_bytes!("../XITS_Math.otf"), 0).unwrap()).unwrap();
+
+        let layout_engine = LayoutBuilder::new(&font)
+            .font_size(font_size)
+            .style(Style::Display)
+            .build();
+
+        let parse_nodes = parse_latex(equation).unwrap();
+        let layout = layout_engine.layout(&parse_nodes).unwrap();
+        let width = layout.width.to_unitless() as f32;
+        let height = (layout.depth - layout.height).to_unitless() as f32;
+        let renderer = rex::Renderer::new();
+
+        let mut backend = GPUIBackend::new(layout.size(), 1.);
+        renderer.render(&layout, &mut backend);
+        let (paths, rects) = backend.paths_and_rects();
+        Self {
+            paths,
+            rects,
+            height,
+            width,
+        }
+    }
+}
+
+impl IntoElement for LatexElement {
+    type Element = LatexElement;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for LatexElement {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let size = Size::<Length> {
+            width: px(self.width).into(),
+            height: px(self.height).into(),
+        };
+
+        let layout_id = window.request_layout(
+            gpui::Style {
+                size,
+                ..Default::default()
+            },
+            None,
+            cx,
+        );
+
+        (layout_id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Self::PrepaintState {
+        ()
+    }
+
+    fn paint(
+        &mut self,
+        _global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint_state: &mut Self::PrepaintState,
+        window: &mut Window,
+        _cx: &mut App,
+    ) {
+        // Paint all the rectangles (rules) first
+        for rect in &self.rects {
+            let translated_rect = Bounds::new(bounds.origin + rect.origin, rect.size);
+            window.paint_quad(gpui::PaintQuad {
+                bounds: translated_rect,
+                background: rgb(0x000000).into(),
+                border_color: rgb(0x000000).into(),
+                border_widths: gpui::Edges::default(),
+                corner_radii: Corners::default(),
+                border_style: BorderStyle::Solid,
+            });
+        }
+
+        // Paint all the paths (glyphs)
+        for path in &self.paths {
+            let mut translated_path = path.clone();
+            // Translate the path to the correct position within the element's bounds
+            for point in translated_path.vertices {}
+
+            translated_path = translated_path.translate(bounds.origin);
+            window.paint_path(translated_path, gpui::black());
+        }
+    }
 }
